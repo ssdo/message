@@ -49,7 +49,7 @@ func GetSession(id string) *Session {
 	if !ok {
 		sess = &Session{
 			id:                id,
-			lastUsedTime:      time.Now().Unix(),
+			lastUsedTime:      time.Now().UnixNano(),
 			clients:           map[string]Client{},
 			clientsLock:       sync.Mutex{},
 			messages:          map[uint64]*BaseMessage{},
@@ -134,12 +134,27 @@ func (sess *Session) received(data []byte) {
 	version := binary.LittleEndian.Uint64(data[0:8])
 	msg := makeBaseMessage(version, data[8:])
 
+	//if version != sess.messageMaxVersion+1 {
+	//	// TODO 控制顺序
+	//	sess.pendingMessages = append(sess.pendingMessages, msg)
+	//	return
+	//}
+
+	sess.dispatch(msg)
+
+	// TODO 如果有暂存的消息
+	//if len(sess.pendingMessages) > 0 {
+	//	// .........
+	//}
+}
+
+func (sess *Session) dispatch(msg *BaseMessage) {
 	// 将数据存入队列
 	sess.messagesLock.Lock()
-	sess.messages[version] = msg
-	sess.messageMaxVersion = version
+	sess.messages[msg.Version] = msg
+	sess.messageMaxVersion = msg.Version
 	if sess.messageMinVersion == 0 {
-		sess.messageMinVersion = version
+		sess.messageMinVersion = msg.Version
 	}
 	sess.messagesLock.Unlock()
 
@@ -165,7 +180,7 @@ func makeBaseMessage(version uint64, data []byte) *BaseMessage {
 func (sess *Session) Send(data []byte) {
 	rd := Config.Redis
 	version := uint64(rd.INCR(sess.maxVerKey))
-	tm := time.Now().Unix()
+	tm := time.Now().UnixNano()
 	versionBuf := make([]byte, 8)
 	binary.LittleEndian.PutUint64(versionBuf, version)
 	timeBuf := make([]byte, 8)
@@ -201,6 +216,7 @@ func (sess *Session) Out(id string) {
 	delete(sess.clients, id)
 	if len(sess.clients) == 0 {
 		sessions.Delete(sess.id)
+		sess.Close()
 	}
 	sess.clientsLock.Unlock()
 }
